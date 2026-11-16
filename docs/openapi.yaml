@@ -1,0 +1,329 @@
+openapi: 3.1.0
+info:
+  title: PawHome API
+  version: 0.1.0
+  description: Backend ของ PawHome — รายละเอียดกฎธุรกิจดู docs/backend-api.md
+servers:
+  - url: http://localhost:3000/api
+security: []
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Supabase Auth access token จาก /auth/login หรือ /auth/register
+  parameters:
+    PetId: { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    AdoptionId: { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+  responses:
+    Error:
+      description: ผิดพลาด
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NoContent: { description: สำเร็จ ไม่มีข้อมูลตอบกลับ }
+  schemas:
+    Error:
+      type: object
+      required: [message]
+      properties: { message: { type: string } }
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+    AuthResponse:
+      type: object
+      required: [user, token, refreshToken, expiresAt]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        token: { type: string, description: Supabase access token }
+        refreshToken: { type: string, description: ใช้ได้ครั้งเดียว }
+        expiresAt: { type: integer, description: วินาที unix ที่ token หมดอายุ }
+    PetInput:
+      type: object
+      required: [name, species, ageMonths, sex, province, description]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        species: { type: string, enum: [DOG, CAT, OTHER] }
+        breed: { type: string, maxLength: 100, default: "" }
+        ageMonths: { type: integer, minimum: 0, maximum: 300 }
+        sex: { type: string, enum: [MALE, FEMALE] }
+        province: { type: string, minLength: 1, maxLength: 100 }
+        imageUrl: { type: string, maxLength: 2048, description: '"" หรือ http(s) URL', default: "" }
+        description: { type: string, minLength: 20, maxLength: 5000 }
+        vaccinated: { type: boolean, default: false }
+        sterilized: { type: boolean, default: false }
+        urgent: { type: boolean, default: false }
+    Pet:
+      allOf:
+        - $ref: "#/components/schemas/PetInput"
+        - type: object
+          required: [id, status, createdAt, ownerId, ownerName]
+          properties:
+            id: { type: integer }
+            status: { type: string, enum: [AVAILABLE, PENDING, ADOPTED] }
+            createdAt: { type: string, format: date-time }
+            ownerId: { type: string, format: uuid }
+            ownerName: { type: string }
+    AdoptionInput:
+      type: object
+      required: [phone, housing, message]
+      properties:
+        phone: { type: string, description: "^0\\d{8,9}$ หลังตัดช่องว่างและขีด" }
+        housing: { type: string, enum: [HOUSE, CONDO, DORM] }
+        message: { type: string, minLength: 20, maxLength: 2000 }
+    AdoptionRequest:
+      type: object
+      required: [id, petId, userId, userName, phone, housing, message, status, createdAt, pet]
+      properties:
+        id: { type: integer }
+        petId: { type: integer }
+        userId: { type: string, format: uuid }
+        userName: { type: string }
+        phone: { type: string }
+        housing: { type: string, enum: [HOUSE, CONDO, DORM] }
+        message: { type: string }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        createdAt: { type: string, format: date-time }
+        pet: { $ref: "#/components/schemas/Pet" }
+
+paths:
+  /health:
+    get:
+      summary: ตรวจ server + ฐานข้อมูล
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string }, database: { type: string } } } } } }
+        "503": { description: ต่อฐานข้อมูลไม่ได้ }
+
+  /auth/register:
+    post:
+      summary: สมัครสมาชิก (signUp ของ Supabase · เปิด Confirm email = ต้องยืนยันอีเมลก่อน) — 10 ครั้ง/นาที/IP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6, maxLength: 72 }
+      responses:
+        "201":
+          description: สมัครแล้ว — ได้ session เลย หรือต้องยืนยันอีเมลก่อน
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AuthResponse"
+                  - type: object
+                    required: [needsVerification, email]
+                    properties: { needsVerification: { const: true }, email: { type: string } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /auth/login:
+    post:
+      summary: เข้าสู่ระบบ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties: { email: { type: string, format: email }, password: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { description: ยังไม่ยืนยันอีเมล, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /auth/refresh:
+    post:
+      summary: แลก refresh token เป็น session ใหม่
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/me:
+    get:
+      summary: ผู้ใช้ที่ล็อกอินอยู่
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      summary: ยกเลิก session (refresh token) ฝั่ง Supabase
+      security: [{ bearer: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /pets:
+    get:
+      summary: รายการน้อง (ใหม่สุดก่อน)
+      parameters:
+        - { name: species, in: query, schema: { type: string, enum: [DOG, CAT, OTHER] } }
+        - { name: province, in: query, schema: { type: string } }
+        - { name: search, in: query, description: ค้นในชื่อ พันธุ์ จังหวัด, schema: { type: string, maxLength: 100 } }
+        - { name: postedWithin, in: query, description: จำนวนวัน, schema: { type: integer, enum: [1, 7, 30] } }
+        - { name: urgent, in: query, schema: { type: string, enum: ["true", "false"] } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Pet" } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+    post:
+      summary: โพสต์หาบ้าน (เจ้าของ = ผู้ที่ล็อกอิน)
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PetInput" } } } }
+      responses:
+        "201": { description: สร้างแล้ว, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+  /pets/{id}:
+    parameters: [{ $ref: "#/components/parameters/PetId" }]
+    get:
+      summary: น้อง 1 ตัว
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: แก้ไข (เฉพาะเจ้าของ)
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PetInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: ลบ (เฉพาะเจ้าของ) — ลบรายการโปรดและคำขอของน้องด้วย
+      security: [{ bearer: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /pets/{id}/adoptions:
+    parameters: [{ $ref: "#/components/parameters/PetId" }]
+    get:
+      summary: คำขอทั้งหมดของน้องตัวนี้ (เฉพาะเจ้าของน้อง)
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AdoptionRequest" } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      summary: ยื่นคำขอรับเลี้ยง
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/AdoptionInput" } } } }
+      responses:
+        "201": { description: ยื่นแล้ว, content: { application/json: { schema: { $ref: "#/components/schemas/AdoptionRequest" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /me/pets:
+    get:
+      summary: โพสต์ของฉัน
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Pet" } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+  /me/favorites:
+    get:
+      summary: รายการโปรด (กดล่าสุดก่อน)
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Pet" } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      summary: เพิ่มรายการโปรด
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [petId], properties: { petId: { type: integer, minimum: 1 } } }
+      responses:
+        "201": { description: เพิ่มแล้ว }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /me/favorites/{petId}:
+    delete:
+      summary: เอาออกจากรายการโปรด
+      security: [{ bearer: [] }]
+      parameters: [{ name: petId, in: path, required: true, schema: { type: integer, minimum: 1 } }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Error" }
+  /me/adoptions:
+    get:
+      summary: คำขอที่ฉันยื่น
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AdoptionRequest" } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /adoptions/{id}:
+    parameters: [{ $ref: "#/components/parameters/AdoptionId" }]
+    patch:
+      summary: อนุมัติ / ไม่ผ่าน (เฉพาะเจ้าของน้อง)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [APPROVED, REJECTED] } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AdoptionRequest" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: ยกเลิกคำขอของตัวเอง (เฉพาะที่ยัง PENDING)
+      security: [{ bearer: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /uploads:
+    post:
+      summary: อัปโหลดรูปน้องไป Supabase Storage
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties: { image: { type: string, format: binary, description: "JPG/PNG/WEBP ≤ 2 MB" } }
+      responses:
+        "201": { description: อัปโหลดแล้ว, content: { application/json: { schema: { type: object, properties: { url: { type: string } } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }

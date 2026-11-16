@@ -1,0 +1,76 @@
+// แผนที่ตารางให้ Prisma ใช้ query เท่านั้น — โครงสร้างจริงมาจาก database/schema.sql
+// ห้ามรัน `prisma migrate` / `prisma db push` (จะไม่สร้าง RLS, trigger, FK ไป auth.users)
+// แก้ตาราง: แก้ SQL ก่อน แล้วค่อยแก้ไฟล์นี้ให้ตรงกัน
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Profile {
+  id               String            @id @db.Uuid
+  name             String
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @default(now()) @map("updated_at") @db.Timestamptz
+  pets             Pet[]
+  favorites        Favorite[]
+  adoptionRequests AdoptionRequest[]
+
+  @@map("profiles")
+}
+
+model Pet {
+  id               Int               @id @default(autoincrement())
+  ownerId          String            @map("owner_id") @db.Uuid
+  owner            Profile           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name             String
+  species          String
+  breed            String            @default("")
+  ageMonths        Int               @map("age_months")
+  sex              String
+  province         String
+  imageUrl         String            @default("") @map("image_url")
+  description      String
+  vaccinated       Boolean           @default(false)
+  sterilized       Boolean           @default(false)
+  urgent           Boolean           @default(false)
+  status           String            @default("AVAILABLE")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @default(now()) @map("updated_at") @db.Timestamptz
+  favorites        Favorite[]
+  adoptionRequests AdoptionRequest[]
+
+  @@map("pets")
+}
+
+model Favorite {
+  userId    String   @map("user_id") @db.Uuid
+  petId     Int      @map("pet_id")
+  user      Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pet       Pet      @relation(fields: [petId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([userId, petId])
+  @@map("favorites")
+}
+
+model AdoptionRequest {
+  id        Int      @id @default(autoincrement())
+  petId     Int      @map("pet_id")
+  userId    String   @map("user_id") @db.Uuid
+  pet       Pet      @relation(fields: [petId], references: [id], onDelete: Cascade)
+  user      Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone     String
+  housing   String
+  message   String
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@unique([userId, petId])
+  @@map("adoption_requests")
+}

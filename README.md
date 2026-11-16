@@ -1,134 +1,145 @@
-# PawHome — Frontend
+# PawHome
 
-เว็บหาบ้านให้น้องหมาแมวจร (Final Project · ส่วน Frontend)
+เว็บหาบ้านให้น้องหมาแมวจร — โพสต์หาบ้าน, ค้นหา/กรองน้อง, รายการโปรด, ยื่นและอนุมัติคำขอรับเลี้ยง, อัปโหลดรูป
 
-Vite + React (TypeScript) · React Router v7 · TanStack Query · Zustand · Tailwind CSS v4
+## Architecture
 
-## วิธีรัน
+```mermaid
+flowchart LR
+    B["Browser<br/>frontend/ (Vite + React)"] -- "REST JSON + Bearer token" --> A["backend/ (Express)"]
+    A -- "Prisma (SQL)" --> D[("Supabase PostgreSQL<br/>profiles · pets · favorites · adoption_requests")]
+    A -- "ตรวจ token / สมัคร / ล็อกอิน" --> U["Supabase Auth"]
+    A -- "อัปโหลดรูป (service role)" --> S["Supabase Storage<br/>bucket pet-images"]
+    B -- "แสดงรูป (public URL)" --> S
+```
+
+หน้าเว็บคุยกับ Backend อย่างเดียว ไม่ถือ key ของ Supabase · Backend ถือ service role key และรหัสฐานข้อมูลใน `.env`
+
+## Folder Structure
+
+```
+├─ frontend/     Vite + React + TS (UI เดิมทั้งหมด)          → frontend/README.md
+├─ backend/      Express + Prisma + Zod + supabase-js        → backend/README.md
+├─ database/     schema.sql · mock-data.sql · verification/   → database/README.md
+└─ docs/         frontend-audit · backend-api · openapi.yaml · database-design · integration-report
+```
+
+## Technology Stack
+
+| ส่วน | ใช้ |
+|---|---|
+| Frontend | React 19, Vite 6, TypeScript 5.8, React Router 7, TanStack Query 5, Zustand 5, Tailwind CSS 4 |
+| Backend | Node.js 22, Express 5, Prisma 6, Zod 3, @supabase/supabase-js 2, multer 2 |
+| Database | Supabase PostgreSQL + Auth + Storage, Row Level Security |
+| Test | Vitest, Supertest, PGlite (PostgreSQL ในหน่วยความจำ ไม่ต้องใช้ Docker) |
+
+## Installation & Setup
+
+ต้องมี Node.js 22+ และโปรเจกต์ Supabase
+
+### 1. Supabase
+
+1. Supabase Dashboard → SQL Editor → รัน [`database/schema.sql`](database/schema.sql)
+2. เก็บค่าไว้ใส่ `backend/.env`:
+   - **Project Settings → API:** Project URL (แค่ `https://<ref>.supabase.co` ไม่มี `/rest/v1`), anon/publishable key, service_role/secret key
+   - **Connect → Session pooler:** connection string (แทน `[YOUR-PASSWORD]` ด้วยรหัสฐานข้อมูล)
+3. **Authentication → URL Configuration:** Site URL = `http://localhost:5173` และเพิ่ม `http://localhost:5173/login` ใน Redirect URLs (ลิงก์ยืนยันอีเมลพากลับมาหน้านี้) — ขึ้นเว็บจริงให้เพิ่มโดเมนจริงด้วย
+4. **Authentication → Sign In / Providers → Email:** เปิด "Confirm email" ไว้ = ผู้สมัครต้องยืนยันอีเมลก่อนเข้าสู่ระบบ (บัญชีทดลองจาก `seed:users` ยืนยันให้แล้ว ไม่ต้องยืนยัน)
+
+### การสมัครสมาชิกและอีเมลยืนยัน
+
+- สมัครผ่านหน้าเว็บ = `signUp` ปกติของ Supabase → Supabase ส่งอีเมลยืนยัน · หน้าเว็บบอกให้ไปเช็คอีเมล · ยืนยันแล้วกลับมาที่ `/login?verified=1`
+- **ผู้ส่งอีเมลในตัวของ Supabase ส่งได้ 2 ฉบับต่อชั่วโมงทั้งโปรเจกต์** ([Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits)) — ใช้จริงหรือให้หลายคนสมัครพร้อมกันต้องตั้ง Custom SMTP ที่ Authentication → Emails → SMTP Settings
+- บัญชีทดลองสร้างด้วย `npm run seed:users` (Admin API ยืนยันอีเมลให้) แยกจากการสมัครสาธารณะ — Backend ไม่ใช้ Admin API ยืนยันอีเมลให้ผู้สมัครทั่วไป
+
+### เดโมที่มีคนล็อกอินพร้อมกันเยอะ (เช่นทั้งห้องเรียน)
+
+ทุกคำขอเข้าสู่ระบบไปถึง Supabase จาก **IP ของ Backend ตัวเดียว** จึงนับรวมกันใน limit ต่อ IP ของ Supabase (ค่าเริ่มต้นตามเอกสาร ณ 16 พ.ย. 2026 — ตรวจค่าจริงของโปรเจกต์ที่ Authentication → Rate Limits):
+
+| Supabase endpoint | ใช้ตอน | ค่าเริ่มต้น |
+|---|---|---|
+| `/token` | ล็อกอินด้วยรหัสผ่าน + ต่ออายุ token | 150 ครั้ง / 5 นาที / IP |
+| `/signup` | สมัครสมาชิก | 30 ครั้ง / 5 นาที / IP |
+| อีเมลที่ Auth ส่ง | ยืนยันอีเมล | 2 ฉบับ / ชั่วโมง / โปรเจกต์ (ผู้ส่งในตัว) |
+
+ก่อนเดโม: เพิ่มค่าที่ **Authentication → Rate Limits** ให้พอกับจำนวนคน · ให้นักเรียนใช้บัญชีที่สร้างไว้ล่วงหน้า (เช่นเพิ่มใน `scripts/seed-users.ts`) แทนการสมัครพร้อมกัน · และปรับ `RATE_LIMIT_*` ของ Backend (ค่าเริ่มต้น 10 ครั้ง/นาที/IP) — ถ้านักเรียนใช้ Wi-Fi เดียวกันจะออกมาเป็น IP เดียว ต้องเพิ่มค่านี้ด้วย · เกิน limit หน้าเว็บจะแสดง "ถี่เกินไป กรุณารอสักครู่" (429) ไม่ใช่ "รหัสผ่านไม่ถูกต้อง"
+
+### 2. Backend
 
 ```bash
+cd backend
 npm install
-cp .env.example .env      # Windows: copy .env.example .env
-npm run dev
+cp .env.example .env       # Windows: copy .env.example .env  แล้วใส่ค่าจากข้อ 1
+npm run seed:users         # สร้างบัญชีทดลอง 3 บัญชีใน Supabase Auth
+npm run dev                # http://localhost:3000/api/health → {"status":"ok","database":"ok"}
 ```
 
-เปิด http://localhost:5173
+### 3. Mock Data
 
-- **ยังไม่มี Backend:** ใน `.env` ตั้ง `VITE_USE_MOCK=true` เว็บจะใช้ฐานข้อมูลจำลองใน `src/api/mockPets.ts` (ผู้ใช้ น้อง รายการโปรด คำขอรับเลี้ยง) ทำได้ทุกอย่าง แต่รีเฟรชแล้วข้อมูลจะกลับเป็นค่าเดิม
-  - บัญชีทดลอง (รหัส `123456`): `pong@pawhome.test` (เจ้าของโพสต์มะลิ ส้มโอ ส้มจี๊ด) · `shelter@pawhome.test` · `mind@pawhome.test`
-- **Backend พร้อมแล้ว:** ตั้ง `VITE_API_URL=http://localhost:3000/api` และ `VITE_USE_MOCK=false` แล้วรัน `npm run dev` ใหม่
+Supabase SQL Editor → รัน [`database/mock-data.sql`](database/mock-data.sql) แล้ว [`database/verification/verify.sql`](database/verification/verify.sql) (ทุกแถวต้อง `ok = true`)
 
-## โครงโฟลเดอร์
+### 4. Frontend
 
-```
-src/
-├─ main.tsx              จุดเริ่ม: QueryClientProvider + RouterProvider
-├─ router.tsx            รายชื่อหน้าทั้งหมด + หน้าที่ต้องล็อกอิน (RequireAuth)
-├─ index.css             Tailwind + สีธีม PawHome (@theme)
-├─ types/                pet.ts, user.ts, adoption.ts (ต้องตรงกับ schema.prisma)
-├─ api/
-│  ├─ client.ts          fetch กลาง + แนบ token + จัดการ error จาก Backend
-│  ├─ pets.ts            /pets, /me/pets
-│  ├─ auth.ts            /auth/login, /auth/register
-│  ├─ favorites.ts       /me/favorites
-│  ├─ adoptions.ts       /me/adoptions, /pets/:id/adoptions, /adoptions/:id
-│  ├─ uploads.ts         /uploads (อัปโหลดรูป)
-│  └─ mockPets.ts        ฐานข้อมูลจำลองระหว่างรอ Backend
-├─ hooks/                TanStack Query: usePets, useAuth, useFavorites, useAdoptions, useUpload
-├─ stores/               Zustand: useFilterStore (ตัวกรอง), useAuthStore (คนที่ล็อกอิน + token), useToastStore (แจ้งเตือน)
-├─ layouts/RootLayout.tsx     Navbar (เปลี่ยนตามการล็อกอิน) + <Outlet /> + Footer + Toaster
-├─ data/                 ads.ts (โฆษณา), guide.ts (เนื้อหาหน้าความรู้)
-├─ components/           PetCard, PetList, FavoriteButton, AdoptionPanel, OwnerRequests, ImageUpload, Toaster, RequireAuth, Field ฯลฯ
-└─ pages/
-   ├─ PetsPage.tsx       /              หน้าแรก: น้องที่ต้องการบ้านด่วน
-   ├─ AllPetsPage.tsx    /pets          ฟีดน้องทั้งหมด + ตัวกรอง
-   ├─ PetDetailPage.tsx  /pets/:id      รายละเอียด, ♡, ขอรับเลี้ยง / (เจ้าของ) แก้ไข ลบ อนุมัติคำขอ
-   ├─ PetFormPage.tsx    /pets/new      สร้าง + อัปโหลดรูป        🔒
-   │                     /pets/:id/edit แก้ไข (เฉพาะเจ้าของ)       🔒
-   ├─ FavoritesPage.tsx  /favorites     รายการโปรด                🔒
-   ├─ MyPage.tsx         /me            โพสต์ของฉัน / คำขอที่ยื่นไว้ / รายการโปรด  🔒
-   ├─ GuidePage.tsx      /guide         ความรู้เบื้องต้นเรื่องหมาแมว
-   ├─ LoginPage.tsx      /login
-   ├─ RegisterPage.tsx   /register
-   └─ NotFoundPage.tsx   *              404
-```
-🔒 = ต้องล็อกอิน ถ้ายังไม่ล็อกอินจะถูกพาไป `/login?redirect=...` แล้วกลับมาหน้าเดิมเมื่อล็อกอินเสร็จ
-
-## ข้อมูลไหลยังไง
-
-```
-ผู้ใช้เลือกตัวกรอง → Zustand (useFilterStore)
-                       ↓
-PetsPage เรียก usePets(filters) → TanStack Query → api/pets.ts → fetch
-                                                      ↓
-                                     Express (GET /pets) → Prisma → PostgreSQL
+```bash
+cd frontend
+npm install
+cp .env.example .env       # VITE_API_URL=http://localhost:3000/api · VITE_USE_MOCK=false
+npm run dev                # http://localhost:5173
 ```
 
-หลังสร้าง แก้ หรือลบ → `useMutation` → `onSuccess` เรียก `invalidateQueries(["pets"])` → TanStack Query โหลดรายการใหม่เอง หน้าเว็บอัปเดตโดยไม่ต้องกด F5 (Zero-Refresh)
+บัญชีทดลอง (รหัส `123456`): `pong@pawhome.test` · `shelter@pawhome.test` · `mind@pawhome.test`
 
-## คำถามที่อาจารย์น่าจะถาม
+## Environment Variables
 
-**Zustand กับ TanStack Query ต่างกันยังไง?**
-TanStack Query เก็บ **Server State** คือข้อมูลที่มาจาก Database ดูแล cache, loading, error และ refetch ให้ ส่วน Zustand เก็บ **Client State** คือสิ่งที่ผู้ใช้เลือกบนหน้าจอ เช่น ตัวกรอง รายการน้องจึงไม่ได้เก็บซ้ำใน Zustand ข้อมูลมีที่มาที่เดียว (Single Source of Truth)
+| ไฟล์ | ตัวแปร | หมายเหตุ |
+|---|---|---|
+| `frontend/.env` | `VITE_API_URL` | ลิงก์ Backend รวม `/api` |
+| | `VITE_USE_MOCK` | `true` = ใช้ข้อมูลจำลองในเบราว์เซอร์ ไม่ต้องมี Backend |
+| `backend/.env` | `PORT` | ค่าเริ่มต้น 3000 |
+| | `CORS_ORIGIN` | โดเมนหน้าเว็บ คั่นด้วย `,` |
+| | `DATABASE_URL` | 🔒 connection string (Session pooler) |
+| | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | ใช้ล็อกอิน |
+| | `SUPABASE_SERVICE_ROLE_KEY` | 🔒 ข้าม RLS ได้ ห้ามอยู่ฝั่งหน้าเว็บ |
+| | `STORAGE_BUCKET` | ค่าเริ่มต้น `pet-images` |
+| | `APP_URL` | หน้าเว็บที่ลิงก์ยืนยันอีเมลพากลับมา (ค่าเริ่มต้น = โดเมนแรกของ `CORS_ORIGIN`) |
+| | `TRUST_PROXY` | `false` (ค่าเริ่มต้น) = ไม่เชื่อ `X-Forwarded-For` · อยู่หลัง proxy ใส่จำนวน proxy เช่น `1` |
+| | `RATE_LIMIT_LOGIN_PER_MINUTE` / `_REGISTER_` / `_REFRESH_` | ต่อ IP ต่อนาที ค่าเริ่มต้น 10 / 10 / 30 |
 
-**ทำไมเปลี่ยนตัวกรองแล้วข้อมูลโหลดใหม่เอง?**
-`queryKey` มีตัวกรองอยู่ข้างใน (`["pets", "list", filters]`) พอตัวกรองเปลี่ยน key ก็เปลี่ยน TanStack Query เลยดึงข้อมูลชุดใหม่ให้
+ไฟล์ `.env` ทั้งหมดอยู่ใน `.gitignore` — commit เฉพาะ `.env.example`
 
-**ตรวจข้อมูลก่อนบันทึกตรงไหน?**
-ฟังก์ชัน `validate()` ใน `PetFormPage.tsx` ตรวจฝั่งหน้าเว็บ และ Backend ต้องตรวจซ้ำแล้วตอบ 400 พร้อม `{ message }` ถ้าข้อมูลผิด หน้าเว็บจะแสดงข้อความนั้นใต้ฟอร์ม
+## Testing
 
-**ทำไมเก็บคนที่ล็อกอินไว้ใน Zustand ไม่ใช่ TanStack Query?**
-คนที่ล็อกอินอยู่เป็นสถานะของหน้าเว็บ (ใช้ตัดสินว่าจะโชว์เมนูไหน แนบ token ไปกับ request) ไม่ใช่รายการข้อมูลที่ต้อง cache หรือ refetch ส่วนรายการโปรดและคำขอรับเลี้ยงเป็นข้อมูลใน Database จึงอยู่ใน TanStack Query ใช้ `persist` ของ Zustand ให้กด F5 แล้วยังล็อกอินอยู่
+```bash
+cd backend && npm test          # 118 เทสต์ (ไม่ต้องมี credentials)
+cd backend && npm run typecheck
+cd frontend && npm test         # 17 เทสต์: ต่ออายุ session / refresh token / หลายแท็บ
+cd frontend && npm run build    # typecheck + build
+cd backend && npm run smoke:live   # ทดสอบทุก endpoint กับ Supabase จริง (ต้องรัน npm run dev ก่อน · dev/demo เท่านั้น)
+```
 
-**ออกจากระบบแล้วข้อมูลของคนเก่าหายไปไหน?**
-queryKey ของข้อมูลส่วนตัวขึ้นต้นด้วย `"me"` ทั้งหมด (`["me","favorites"]`, `["me","adoptions"]`, `["me","pets"]`) ตอนออกจากระบบเรียก `removeQueries({ queryKey: ["me"] })` ครั้งเดียวล้างหมด
+- `npm test` (backend) สร้าง PostgreSQL จำลอง รัน `schema.sql` + `mock-data.sql` (สองรอบ เพื่อตรวจว่ารันซ้ำได้) + `verify.sql` แล้วยิงทุก endpoint ผ่าน Express → Prisma → ฐานข้อมูลนั้น โดยแทนเฉพาะ Supabase Auth/Storage ด้วยของจำลอง
+- `npm run smoke:live` สร้างผู้ใช้ทดสอบชั่วคราว ทดสอบ แล้วลบทุกอย่างที่สร้าง (ไม่แตะข้อมูลจำลอง)
+- Browser E2E ทำด้วย Playwright (ไม่ได้ติดตั้งในโปรเจกต์) · ทดสอบเองด้วยมือ: [docs/manual-test-checklist.md](docs/manual-test-checklist.md)
+- ผลล่าสุด: [docs/integration-report.md](docs/integration-report.md)
 
-**Toast ทำงานยังไง?**
-`useToastStore` (Zustand) เก็บรายการแจ้งเตือน `onSuccess` ของ mutation เรียก `toast("บันทึกแล้ว")` แล้ว `<Toaster />` ใน RootLayout แสดงผล หายเองใน 3 วินาที
+## API
 
-**ทำไมกด F5 บน Vercel แล้วไม่ 404?**
-`vercel.json` ตั้ง rewrite ให้ทุกลิงก์ส่ง `index.html` แล้วให้ React Router เลือกหน้าเอง
+21 endpoints ใต้ `/api` — [docs/backend-api.md](docs/backend-api.md) · OpenAPI: [docs/openapi.yaml](docs/openapi.yaml)
 
-## สิ่งที่ต้องตกลงกับคนทำ Backend
+## Deploy
 
-**ทั่วไป**
-- ตอน error ส่ง JSON `{ "message": "ข้อความภาษาไทย" }` พร้อม status code ที่ถูก: 400 ข้อมูลผิด · 401 ยังไม่ล็อกอิน/token ผิด · 403 ไม่ใช่เจ้าของ · 404 ไม่พบ · 409 ซ้ำ · 500
-- ลบสำเร็จตอบ 204 · สร้างสำเร็จตอบ 201
-- เปิด `cors` ให้ `http://localhost:5173`
-- route ที่ต้องล็อกอิน อ่าน token จาก header `Authorization: Bearer <token>` (เช่นใช้ jsonwebtoken)
+- Frontend (Vercel): Root Directory = `frontend` · ตั้ง `VITE_API_URL` เป็นลิงก์ Backend จริง
+- Backend: เครื่องที่รัน Node 22 ได้ (Render, Railway, Fly ฯลฯ) · `npm run build && npm start` · ตั้ง `CORS_ORIGIN` และ `APP_URL` เป็นโดเมนของหน้าเว็บ · ตั้ง `TRUST_PROXY=1` (แพลตฟอร์มเหล่านี้มี proxy ข้างหน้า 1 ชั้น ไม่งั้นผู้ใช้ทุกคนได้ IP เดียวกันและโดน rate limit รวมกัน)
+- Supabase: เพิ่มโดเมนจริงใน Redirect URLs และตั้ง Custom SMTP ก่อนเปิดให้สมัครจริง
 
-**ตาราง (schema.prisma)**
-- `User` id, name, email (`@unique`), password (เก็บแบบ bcrypt hash ห้ามส่งกลับมา)
-- `Pet` ช่องตาม `src/types/pet.ts` + `ownerId` (FK → User) และตอบ `ownerName` มาด้วย
-- `Favorite` userId, petId, createdAt — `@@unique([userId, petId])`
-- `AdoptionRequest` id, userId, petId, phone, housing (`HOUSE`/`CONDO`/`DORM`), message, status (`PENDING`/`APPROVED`/`REJECTED`), createdAt — `@@unique([userId, petId])`
-- ลบน้องแล้วลบ Favorite และ AdoptionRequest ของน้องตัวนั้นด้วย (`onDelete: Cascade`)
+## Known Issues
 
-**Route**
-
-| Method | Path | ต้องล็อกอิน | หมายเหตุ |
-|---|---|---|---|
-| POST | `/auth/register` | | `{ name, email, password }` → `{ user, token }` · อีเมลซ้ำ 409 |
-| POST | `/auth/login` | | `{ email, password }` → `{ user, token }` · ผิด 401 |
-| GET | `/pets?species&province&search&postedWithin&urgent` | | `postedWithin` = จำนวนวัน (1, 7, 30) · `urgent` = true/false ไม่ส่ง = ทั้งหมด |
-| GET | `/pets/:id` | | |
-| POST | `/pets` | ✓ | ownerId มาจาก token |
-| PUT / DELETE | `/pets/:id` | ✓ เจ้าของ | ไม่ใช่เจ้าของ 403 |
-| GET | `/me/pets` | ✓ | โพสต์ของฉัน |
-| GET | `/me/favorites` | ✓ | → `Pet[]` |
-| POST | `/me/favorites` | ✓ | `{ petId }` · ซ้ำ 409 |
-| DELETE | `/me/favorites/:petId` | ✓ | 204 |
-| GET | `/me/adoptions` | ✓ | คำขอที่ฉันยื่น (include `pet`) |
-| POST | `/pets/:id/adoptions` | ✓ | `{ phone, housing, message }` · ซ้ำ 409 · ขอน้องของตัวเอง/น้องได้บ้านแล้ว 400 · น้องเปลี่ยนเป็น `PENDING` |
-| DELETE | `/adoptions/:id` | ✓ ผู้ยื่น | ยกเลิกได้เฉพาะที่ยัง `PENDING` |
-| GET | `/pets/:id/adoptions` | ✓ เจ้าของน้อง | คำขอทั้งหมดของน้องตัวนี้ |
-| PATCH | `/adoptions/:id` | ✓ เจ้าของน้อง | `{ status: "APPROVED" \| "REJECTED" }` · อนุมัติแล้วน้องเป็น `ADOPTED` และคำขออื่นที่รออยู่เป็น `REJECTED` |
-| POST | `/uploads` | ✓ | multipart ช่อง `image` (jpg/png/webp ≤ 2 MB) → `{ url }` ใช้ multer เก็บไฟล์ หรือส่งต่อ Cloudinary / Supabase Storage |
-
-สถานะน้อง: ไม่มีคำขอ = `AVAILABLE` · มีคำขอรอ = `PENDING` · มีคำขออนุมัติ = `ADOPTED` (ดูตัวอย่าง logic ได้ที่ `syncPetStatus()` ใน `mockPets.ts`)
-
-## เครดิต
-
-ภาพแมวหน้าแรก: Claire Abdo / Unsplash · ข้อมูลสัตว์เป็นข้อมูลจำลองเพื่อการศึกษา · เนื้อหาหน้าความรู้เป็นข้อมูลทั่วไป ไม่ใช้แทนคำแนะนำของสัตวแพทย์
-#   p r o j e c t - 3 1 9  
- 
+- Session ต่ออายุอัตโนมัติด้วย refresh token (ดู [backend-api.md → Session](docs/backend-api.md#session)) · ถ้า refresh token หมดอายุหรือถูกยกเลิก จะถูกพาไปหน้าเข้าสู่ระบบ
+- ผู้ใช้ที่เคยล็อกอินในโหมดจำลองจะมี token จำลองค้างใน localStorage → ถูกล็อกเอาต์อัตโนมัติเมื่อเรียก API ครั้งแรก
+- โปรเจกต์ยังไม่มี ESLint (มีแค่ TypeScript strict + `noUnusedLocals`)
+- ลบโพสต์หรือเปลี่ยนรูปแล้ว ไฟล์รูปเก่าใน Storage ยังอยู่ (ยังไม่มีงานลบไฟล์ที่ไม่ได้ใช้)
+- ไม่มี pagination (หน้าเว็บแสดง "พบ N ตัว" จากรายการทั้งหมด) — พอสำหรับหลักร้อย-พันโพสต์
+- Rate limit ของ Backend นับในหน่วยความจำของ process เดียว — รัน Backend หลายตัวต้องย้ายตัวนับไปที่ร่วมกัน (เช่น Redis)
+- บน Windows: `npm run build` ของ backend ต้องปิด `npm run dev` ก่อน (`prisma generate` เขียนทับไฟล์ที่ server กำลังใช้ไม่ได้)
+- ปุ่มบนการ์ดโฆษณาเป็นลิงก์ `#` ตามต้นฉบับ (เนื้อหายังเป็น placeholder)
+- `mock-data.sql` ใส่ id น้อง 1–12 เอง ใช้กับฐานข้อมูล demo ที่ว่างเท่านั้น (มี guard หยุดเองถ้าเจอข้อมูลผู้ใช้จริง)
