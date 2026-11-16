@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* ธีม PawHome — ใช้ในคลาส Tailwind ได้เลย เช่น bg-navy, text-ink, bg-ground */
+@theme {
+  --color-navy: #2b4486;
+  --color-navy-dark: #1d2e5c;
+  --color-navy-soft: #e3e9f6;
+  --color-ground: #eee8df;
+  --color-sand: #e4dbcf;
+  --color-line: #e6ded3;
+  --color-ink: #1f2433;
+  --color-muted: #5e6472;
+  --color-danger: #b42318;
+
+  --font-sans: "IBM Plex Sans Thai", system-ui, sans-serif;
+  --font-display: "Prompt", "IBM Plex Sans Thai", sans-serif;
+  --font-hand: "Sriracha", cursive;
+}
+
+body {
+  @apply bg-ground text-ink font-sans antialiased;
+}
